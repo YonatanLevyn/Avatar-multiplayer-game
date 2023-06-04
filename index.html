@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MO Game</title>
+    <style>
+        .grid {
+            display: flex;
+            flex-wrap: wrap;
+            width: 300px;
+        }
+        .cell {
+            width: 30px;
+            height: 30px;
+            border: 1px solid black;
+            box-sizing: border-box;
+        }
+        .fire {
+            background-color: red;
+        }
+        .earth {
+            background-color: rgb(100, 62, 62);
+        }
+        .air {
+            background-color: grey;
+        }
+        .water {
+            background-color: blue;
+        }
+    </style>
+</head>
+<body>
+    
+    <h1>Avatar Multyplayer Game</h1>
+    <input id="nickname" placeholder="nick name">
+    <input id="gameName" placeholder="Game name">
+    <button id="createGame">Create game</button>
+    <button id="joinGame">Join game</button>
+    <p>Use the arrow keys to move around</p>
+    <div id="grid" class="grid"></div>
+    <div id="timer">0:00</div>
+    <div id="life">Life: 10</div>
+    <div id="score">Score: 0</div>
+    <div id="players">Currently playing: </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        
+        // Get references to DOM elements
+        const gridElement = document.getElementById('grid');
+        const timerElement = document.getElementById('timer');
+        const lifeElement = document.getElementById('life');
+        const playersElement = document.getElementById('players');
+        const scoreElement = document.getElementById('score');
+
+        // Connect to server via socket.io 
+        const socket = io();
+        const gridSize = 10;
+        const games = {};
+
+        let gameName = '';
+     
+        document.getElementById('createGame').addEventListener('click', () => {
+            nickName = document.getElementById('nickname').value;
+            gameName = document.getElementById('gameName').value;
+            games[gameName] = {};
+            socket.emit('createGame', gameName, nickName);
+        });
+
+        document.getElementById('joinGame').addEventListener('click', () => {
+            nickName = document.getElementById('nickname').value;
+            gameName = document.getElementById('gameName').value;
+            games[gameName] = {};
+            socket.emit('joinGame', gameName, nickName);
+        });
+
+        socket.on('timer', (elapsedTime) => {
+            const seconds = Math.floor((elapsedTime / 1000) % 60);
+            const minutes = Math.floor(elapsedTime / 60000);
+            // textContent is the text inside an element
+            timerElement.textContent = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        });
+
+        // Create grid
+        for (let i = 0; i < gridSize ** 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            gridElement.appendChild(cell);
+        }
+
+        // Update player positions
+        const updateGrid = () => {
+            const players = games[gameName];
+            const cells = Array.from(gridElement.getElementsByClassName('cell'));
+            // Clear grid
+            cells.forEach(cell => cell.className = 'cell');
+
+            // Set player positions
+            Object.values(players).forEach(player => {
+                const index = player.location.y * gridSize + player.location.x;
+                cells[index].className += ` ${player.element}`;
+            });
+        }
+
+        // Update players and grid when player data changes
+        socket.on('currentPlayers', (currentPlayers) => {
+            playersElement.textContent = `Currently playing: \n ${(currentPlayers.map(player => player.nickName)).join(' ')} \n`;
+            currentPlayers.forEach(player => {
+                if (games[player.gameName]) {
+                    games[player.gameName][player.id] = player;
+                }
+            });
+            updateGrid();
+        });
+
+        socket.on('playerLife', (id, newLife) => {
+            const player = games[gameName][id];
+            if (player) {
+                player.life = newLife;
+                if (id === socket.id) {  // Only update life display for the current client's player
+                    lifeElement.textContent = `Life: ${newLife}`;
+                }
+            }
+        });
+  
+        socket.on('newPlayer', (player) => {
+            if (games[player.gameName]) {
+                games[player.gameName][player.id] = player;
+                updateGrid();
+            }
+        });
+
+        socket.on('playerBent', (id, player) => {
+            players[id] = player;
+            console.log(`Player ${id} has gained bending abilities`);
+        });
+    
+        socket.on('playerDisconnected', (id) => {
+            delete games[gameName][id];
+            updateGrid();
+        });
+
+        socket.on('playerDied', (defeatedPlayerId, playerId) => {
+            const player = games[gameName][playerId];
+            const defeatedPlayer = games[gameName][defeatedPlayerId];
+
+            delete games[gameName][defeatedPlayerId];
+            updateGrid();
+            if (defeatedPlayerId === socket.id) {
+                alert('You have been defeated by ' + player.nickName + '!');
+            }
+            if (playerId === socket.id) {
+                alert(`You defeated ${defeatedPlayer.nickName}!`);
+                player.score++;
+                scoreElement.textContent = `Score: ${player.score}`;
+            }
+
+            else {
+                console.log(`${defeatedPlayer.nickName} has been defeated!`);
+            }
+        });
+
+        socket.on('playerMoved', (id, player) => {
+            if (games[player.gameName]) {
+                // Update player position
+                games[player.gameName][id] = player;
+                // Update grid
+                updateGrid();
+            }
+        });
+
+        // Handle keyboard events for player movement
+        window.addEventListener('keydown', (event) => {
+            const direction = {
+                'ArrowUp': {dx: 0, dy: -1},
+                'ArrowDown': {dx: 0, dy: 1},
+                'ArrowLeft': {dx: -1, dy: 0},
+                'ArrowRight': {dx: 1, dy: 0}
+            }[event.key];
+
+            // Send movement data to server
+            if (direction) {
+                socket.emit('playerMovement', direction);
+                return;
+            }
+        
+            // check for 'b' keyword only if user pressed non directional key
+            if (event.key.toLowerCase() === 'b') {
+                socket.emit('bend');
+              }
+            });
+
+        // Error handling
+        socket.on('connect_error', (err) => {
+            console.log(`Connection error: ${err}`);
+        });
+
+    </script>
+</body>
+</html>
+
